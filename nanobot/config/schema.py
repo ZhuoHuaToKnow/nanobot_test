@@ -51,6 +51,19 @@ class DingTalkConfig(Base):
     allow_from: list[str] = Field(default_factory=list)  # Allowed staff_ids
 
 
+class WeComConfig(Base):
+    """WeChat Work (企业微信) channel configuration."""
+
+    enabled: bool = False
+    corp_id: str = ""  # 企业ID
+    agent_id: int = 0  # 应用AgentId
+    secret: str = ""  # 应用Secret
+    token: str = ""  # 回调验证Token (可选，用于接收消息)
+    encoding_aes_key: str = ""  # 回调加密Key (可选)
+    callback_url: str = ""  # 回调URL (可选，用于接收消息)
+    allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs
+
+
 class DiscordConfig(Base):
     """Discord channel configuration."""
 
@@ -179,6 +192,7 @@ class ChannelsConfig(Base):
     email: EmailConfig = Field(default_factory=EmailConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
     qq: QQConfig = Field(default_factory=QQConfig)
+    wecom: WeComConfig = Field(default_factory=WeComConfig)
 
 
 class AgentDefaults(Base):

@@ -1,0 +1,11 @@
+{
+  "channels": {
+    "wecom": {
+      "enabled": true,
+      "corpId": "ww1234567890abcdef",
+      "agentId": 1000002,
+      "secret": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "allowFrom": []
+    }
+  }
+}

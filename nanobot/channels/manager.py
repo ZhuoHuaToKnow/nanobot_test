@@ -136,7 +136,18 @@ class ChannelManager:
                 logger.info("QQ channel enabled")
             except ImportError as e:
                 logger.warning("QQ channel not available: {}", e)
-    
+
+        # WeChat Work channel
+        if self.config.channels.wecom.enabled:
+            try:
+                from nanobot.channels.wechat import WeComChannel
+                self.channels["wecom"] = WeComChannel(
+                    self.config.channels.wecom, self.bus
+                )
+                logger.info("WeChat Work channel enabled")
+            except ImportError as e:
+                logger.warning("WeChat Work channel not available: {}", e)
+
     async def _start_channel(self, name: str, channel: BaseChannel) -> None:
         """Start a channel and log any exceptions."""
         try:
