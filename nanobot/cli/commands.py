@@ -445,9 +445,9 @@ def agent(
     from nanobot.agent.loop import AgentLoop
     from nanobot.cron.service import CronService
     from loguru import logger
-    
+
     config = load_config()
-    
+
     bus = MessageBus()
     provider = _make_provider(config)
 
@@ -577,6 +577,7 @@ def agent(
                             content=user_input,
                         ))
 
+                        # Wait for agent response (let agent complete at its own pace)
                         with _thinking_ctx():
                             await turn_done.wait()
 
@@ -1119,7 +1120,6 @@ def _login_github_copilot() -> None:
         console.print(f"[red]Authentication error: {e}[/red]")
         raise typer.Exit(1)
 
-
 # ============================================================================
 # Config Commands
 # ============================================================================
@@ -1147,6 +1147,95 @@ def quick_setup():
     from nanobot.cli.config_wizard import ConfigWizard
     wizard = ConfigWizard()
     wizard.quick_setup()
+
+
+# ============================================================================
+# Nanobot Backup/Restore Commands
+# ============================================================================
+
+
+@app.command()
+def backup(
+    output: str = typer.Option(None, "--output", "-o", help="Output file path"),
+):
+    """Backup nanobot data directory to a zip archive."""
+    from nanobot.config.loader import get_data_dir
+    from nanobot.cli.backup import backup_nano_data
+
+    data_dir = get_data_dir()
+
+    if not data_dir.exists():
+        console.print(f"[red]Error: Nanobot data directory not found at {data_dir}[/red]")
+        raise typer.Exit(1)
+
+    output_path = Path(output) if output else None
+
+    try:
+        result_path = backup_nano_data(
+            data_dir=data_dir,
+            output_path=output_path,
+            on_progress=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
+        )
+        console.print(f"[green]✓[/green] 备份完成: {result_path}")
+    except Exception as e:
+        console.print(f"[red]备份失败: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def restore(
+    archive: str = typer.Argument(..., help="Path to the backup archive to restore"),
+    merge: bool = typer.Option(False, "--merge", "-m", help="Merge mode, preserve existing files"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force restore without confirmation"),
+):
+    """Restore nanobot data directory from a backup archive."""
+    from nanobot.config.loader import get_data_dir
+    from nanobot.cli.backup import restore_nano_data
+
+    data_dir = get_data_dir()
+    archive_path = Path(archive)
+
+    if not archive_path.exists():
+        console.print(f"[red]Error: Backup not found: {archive_path}[/red]")
+        raise typer.Exit(1)
+
+    # Show restore info
+    console.print(f"{__logo__} 恢复nanobot数据")
+    console.print(f"  备份文件: {archive_path}")
+    console.print(f"  目标目录: {data_dir}")
+
+    if data_dir.exists():
+        console.print(f"  [yellow]现有数据将被")
+        if merge:
+            console.print(f"  [yellow]合并保留[/yellow]")
+        else:
+            console.print(f"  [yellow]完全覆盖[/yellow]")
+        console.print(f"  [yellow]并自动备份[/yellow]")
+
+    if not force:
+        if not typer.confirm("\n是否继续?"):
+            console.print("[dim]已取消[/dim]")
+            raise typer.Exit(0)
+
+    try:
+        result = restore_nano_data(
+            archive_path=archive_path,
+            data_dir=data_dir,
+            merge=merge,
+            backup=True,
+            on_progress=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
+        )
+
+        console.print("[green]✓[/green] 恢复完成")
+        console.print(f"  恢复文件: {result['files_imported']}")
+        if result['files_skipped'] > 0:
+            console.print(f"  跳过文件: {result['files_skipped']}")
+        if result['backup_path']:
+            console.print(f"  备份位置: {result['backup_path']}")
+
+    except Exception as e:
+        console.print(f"[red]恢复失败: {e}[/red]")
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
