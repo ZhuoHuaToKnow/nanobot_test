@@ -1238,5 +1238,154 @@ def restore(
         raise typer.Exit(1)
 
 
+# ============================================================================
+# MCP Tools Cache Commands
+# ============================================================================
+
+
+@app.command()
+def mcp_refresh(
+    force: bool = typer.Option(False, "--force", "-f", help="Force refresh even if cache exists"),
+):
+    """Refresh MCP tools cache by connecting to all configured servers."""
+    import asyncio
+    from contextlib import AsyncExitStack
+
+    from nanobot.config.loader import load_config
+    from nanobot.agent.tools.mcp import connect_mcp_servers
+    from nanobot.agent.tools.registry import ToolRegistry
+    from nanobot.agent.tools.mcp_cache import MCPCache
+
+    config = load_config()
+    mcp_servers = config.tools.mcp_servers
+
+    if not mcp_servers:
+        console.print("[yellow]No MCP servers configured[/yellow]")
+        console.print("  Configure MCP servers in your config file under 'tools.mcpServers'")
+        raise typer.Exit(0)
+
+    console.print(f"{__logo__} Refreshing MCP Tools Cache")
+    console.print(f"  Configured servers: {', '.join(mcp_servers.keys())}")
+
+    # Check if cache exists
+    cache = MCPCache()
+    cache_exists = cache.cache_path.exists()
+
+    if cache_exists and not force:
+        last_update = "unknown"
+        try:
+            import json
+            with open(cache.cache_path) as f:
+                data = json.load(f)
+                last_update = data.get("updated_at", "unknown")
+        except Exception:
+            pass
+
+        console.print(f"  Cache exists (updated: {last_update})")
+        if not typer.confirm("\nForce refresh cache?"):
+            console.print("[dim]Cancelled[/dim]")
+            raise typer.Exit(0)
+
+    async def _refresh():
+        registry = ToolRegistry()
+        stack = AsyncExitStack()
+
+        try:
+            await stack.__aenter__()
+            console.print("\n[dim]Connecting to MCP servers...[/dim]")
+
+            sessions = await connect_mcp_servers(mcp_servers, registry, stack)
+
+            # Show results
+            console.print("\n[green]✓[/green] Cache refreshed successfully")
+            for server_name in sessions.keys():
+                # Count tools for this server
+                tool_count = sum(
+                    1 for name in registry.tool_names
+                    if name.startswith(f"mcp_{server_name}_")
+                )
+                console.print(f"  [cyan]{server_name}[/cyan]: {tool_count} tools")
+
+            total_tools = len(registry.tool_names)
+            console.print(f"\n  Total: {total_tools} MCP tools cached")
+
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+            raise typer.Exit(1)
+        finally:
+            await stack.aclose()
+
+    asyncio.run(_refresh())
+
+
+@app.command()
+def mcp_cache_info():
+    """Show MCP tools cache information."""
+    import json
+
+    from nanobot.agent.tools.mcp_cache import MCPCache
+
+    cache = MCPCache()
+
+    if not cache.cache_path.exists():
+        console.print("[yellow]No MCP cache found[/yellow]")
+        console.print(f"  Cache path: {cache.cache_path}")
+        console.print("  Run 'nanobot mcp-refresh' to create cache")
+        raise typer.Exit(0)
+
+    try:
+        with open(cache.cache_path) as f:
+            data = json.load(f)
+
+        console.print(f"{__logo__} MCP Tools Cache Info")
+        console.print(f"  Cache path: {cache.cache_path}")
+        console.print(f"  Version: {data.get('version', 'unknown')}")
+        console.print(f"  Updated: {data.get('updated_at', 'unknown')}")
+
+        servers = data.get("servers", {})
+        console.print(f"\n  Cached servers: {len(servers)}")
+
+        for server_name, server_data in servers.items():
+            tools = server_data.get("tools", [])
+            console.print(f"\n  [cyan]{server_name}[/cyan]: {len(tools)} tools")
+            for tool in tools[:3]:  # Show first 3 tools
+                console.print(f"    - {tool.get('mcp_name', tool.get('original_name'))}")
+            if len(tools) > 3:
+                console.print(f"    ... and {len(tools) - 3} more")
+
+        total_tools = sum(len(s.get("tools", [])) for s in servers.values())
+        console.print(f"\n  Total tools: {total_tools}")
+
+    except Exception as e:
+        console.print(f"[red]Error reading cache: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def mcp_cache_clear():
+    """Clear MCP tools cache."""
+    from nanobot.agent.tools.mcp_cache import MCPCache
+
+    cache = MCPCache()
+
+    if not cache.cache_path.exists():
+        console.print("[yellow]No MCP cache found[/yellow]")
+        raise typer.Exit(0)
+
+    console.print(f"{__logo__} Clear MCP Cache")
+    console.print(f"  Cache path: {cache.cache_path}")
+
+    if not typer.confirm("\nClear MCP tools cache?"):
+        console.print("[dim]Cancelled[/dim]")
+        raise typer.Exit(0)
+
+    try:
+        cache.cache_path.unlink()
+        console.print("[green]✓[/green] Cache cleared")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()

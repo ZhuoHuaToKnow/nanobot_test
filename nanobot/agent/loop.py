@@ -96,6 +96,8 @@ class AgentLoop:
         self._mcp_stack: AsyncExitStack | None = None
         self._mcp_connected = False
         self._mcp_connecting = False
+        self._mcp_sessions: dict[str, Any] = {}  # MCP server sessions
+        self._mcp_loaded_from_cache = False  # Track if tools were loaded from cache
         self._consolidating: set[str] = set()  # Session keys with consolidation in progress
         self._consolidation_tasks: set[asyncio.Task] = set()  # Strong refs to in-flight tasks
         self._consolidation_locks: dict[str, asyncio.Lock] = {}
@@ -118,16 +120,44 @@ class AgentLoop:
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
 
+    async def _load_mcp_cache_only(self) -> bool:
+        """Load MCP tools from cache only, without connecting to servers.
+
+        Returns:
+            True if tools were loaded from cache, False otherwise.
+        """
+        if not self._mcp_servers:
+            return False
+
+        from nanobot.agent.tools.mcp import load_mcp_tools_from_cache
+
+        try:
+            self._mcp_loaded_from_cache = await load_mcp_tools_from_cache(
+                self._mcp_servers,
+                self.tools,
+                self._get_mcp_session,
+            )
+            if self._mcp_loaded_from_cache:
+                logger.info("MCP tools loaded from cache (cache-only mode)")
+            return self._mcp_loaded_from_cache
+        except Exception as e:
+            logger.warning("Failed to load MCP tools from cache: {}", e)
+            return False
+
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
             return
         self._mcp_connecting = True
         from nanobot.agent.tools.mcp import connect_mcp_servers
+
         try:
+            # Full connection: connect to all MCP servers
             self._mcp_stack = AsyncExitStack()
             await self._mcp_stack.__aenter__()
-            await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)
+            self._mcp_sessions = await connect_mcp_servers(
+                self._mcp_servers, self.tools, self._mcp_stack
+            )
             self._mcp_connected = True
         except Exception as e:
             logger.error("Failed to connect MCP servers (will retry next message): {}", e)
@@ -139,6 +169,10 @@ class AgentLoop:
                 self._mcp_stack = None
         finally:
             self._mcp_connecting = False
+
+    def _get_mcp_session(self, server_name: str) -> Any | None:
+        """Get MCP session for a server (used by CachedMCPToolWrapper)."""
+        return self._mcp_sessions.get(server_name)
 
     def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
@@ -275,6 +309,7 @@ class AgentLoop:
             except (RuntimeError, BaseExceptionGroup):
                 pass  # MCP SDK cancel scope cleanup is noisy but harmless
             self._mcp_stack = None
+        self._mcp_sessions.clear()
 
     def stop(self) -> None:
         """Stop the agent loop."""
@@ -380,6 +415,11 @@ class AgentLoop:
             self._consolidation_tasks.add(_task)
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+
+        # For interactive mode (non-system messages), ensure full MCP connection
+        if msg.channel != "system":
+            await self._connect_mcp()
+
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
@@ -453,7 +493,10 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
         """Process a message directly (for CLI or cron usage)."""
-        await self._connect_mcp()
+        # Load MCP tools from cache only (fast, no server connections)
+        if not self._mcp_loaded_from_cache:
+            await self._load_mcp_cache_only()
+
         msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
         response = await self._process_message(msg, session_key=session_key, on_progress=on_progress)
         return response.content if response else ""
