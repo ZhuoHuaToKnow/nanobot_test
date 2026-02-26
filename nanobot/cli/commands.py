@@ -1120,5 +1120,34 @@ def _login_github_copilot() -> None:
         raise typer.Exit(1)
 
 
+# ============================================================================
+# Config Commands
+# ============================================================================
+
+
+@app.command("config")
+def run_config_wizard():
+    """运行交互式配置向导（多级菜单）"""
+    from nanobot.cli.config_wizard import ConfigWizard
+    wizard = ConfigWizard()
+    wizard.run()
+
+
+@app.command("show")
+def show_config():
+    """显示当前配置摘要"""
+    from nanobot.cli.config_wizard import ConfigWizard
+    wizard = ConfigWizard()
+    wizard.show_current_config()
+
+
+@app.command("quick-setup")
+def quick_setup():
+    """快速配置（API Key + 模型）"""
+    from nanobot.cli.config_wizard import ConfigWizard
+    wizard = ConfigWizard()
+    wizard.quick_setup()
+
+
 if __name__ == "__main__":
     app()
